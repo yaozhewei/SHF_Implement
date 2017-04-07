@@ -1,3 +1,6 @@
+'''
+this data file is used to test the project is right or not. Hence we only uses two subdata-set to train our model.
+'''
 import numpy as np
 
 def load_data():
@@ -6,26 +9,18 @@ def load_data():
 	data = []
 	data.append(np.loadtxt(data_path + 'usps0', delimiter=','))
 	data.append(np.loadtxt(data_path + 'usps1', delimiter=','))
-	data.append(np.loadtxt(data_path + 'usps2', delimiter=','))
-	data.append(np.loadtxt(data_path + 'usps3', delimiter=','))
-	data.append(np.loadtxt(data_path + 'usps4', delimiter=','))
-	data.append(np.loadtxt(data_path + 'usps5', delimiter=','))
-	data.append(np.loadtxt(data_path + 'usps6', delimiter=','))
-	data.append(np.loadtxt(data_path + 'usps7', delimiter=','))
-	data.append(np.loadtxt(data_path + 'usps8', delimiter=','))
-	data.append(np.loadtxt(data_path + 'usps9', delimiter=','))
 
     # load permutation matrix
 	perms = np.loadtxt(data_path + 'permutation', delimiter=',') - 1
 	perms = perms.astype(int)
 
     # set train/ test data, 
-	train = np.zeros((8000, 256))
-	test = np.zeros((3000, 256))
-	train_labels = np.zeros((8000, 10))
-	test_labels = np.zeros((3000, 10))
-	e = np.eye(10)
-	for i in range(10):
+	train = np.zeros((1600, 256))
+	test = np.zeros((600, 256))
+	train_labels = np.zeros((1600, 2))
+	test_labels = np.zeros((600, 2))
+	e = np.eye(2)
+	for i in range(2):
 		train[i * 800 : (i+1) * 800, :] = data[i][:,perms[:800]].T
 		test[i * 300 : (i+1) * 300, :] = data[i][:,perms[800:]].T
 		train_labels[i * 800 : (i+1) * 800, :] = np.tile(e[i,:], (800, 1))

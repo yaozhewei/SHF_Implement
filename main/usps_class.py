@@ -8,7 +8,7 @@ print('Preparing data...')
 (trainX, testX) = load_data2.standard(trainX, testX)
 
 # parameter
-_layers = [500, 10]
+_layers = [500, 2]
 _dropout = [0.5, 0.5]
 _maxepoch = 100
 _gradbatchsize = 200
@@ -17,7 +17,12 @@ _maxiter = 5
 _activations = ['ReLU', 'softmax']
 _cgdecay_ini = 0.5
 _cgdecay_fnl = 0.99
+_objfun = 'softmax-entropy'
+_weight_cost = 2e-5
+_damp = 0.1
+_p_i = 0.5
+_p_f = 0.99
 
 print('Training...')
-nn = shf.SHF(layers=_layers, dropout=_dropout, maxepoch=_maxepoch, gradbatchsize=_gradbatchsize, batchsize=_batchsize, maxiter=_maxiter, activations=_activations, cgdecay_ini = _cgdecay_ini, cgdecay_fnl = _cgdecay_fnl)
+nn = shf.SHF(layers=_layers, dropout=_dropout, maxepoch=_maxepoch, gradbatchsize=_gradbatchsize, batchsize=_batchsize, maxiter=_maxiter, activations=_activations, cgdecay_ini = _cgdecay_ini, cgdecay_fnl = _cgdecay_fnl, objfun = _objfun, weight_cost = _weight_cost, damp = _damp, p_i = _p_i, p_f = _p_f)
 nn.train(trainX, train_labels, testX, test_labels)

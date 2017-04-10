@@ -12,7 +12,12 @@ class SHF(object):
 				 maxiter=5, 
 				 activations=None,
 				 cgdecay_ini = 0.5,
-				 cgdecay_fnl = 0.99):
+				 cgdecay_fnl = 0.99,
+				 objfun='softmax-entropy',
+				 weight_cost = 2e-5,
+				 damp = 0.1,
+				 p_i=0.5,
+				 p_f=0.99):
 
 		self.layers = layers
 		self.dropout = dropout
@@ -23,7 +28,11 @@ class SHF(object):
 		self.activations = activations
 		self.cgdecay_ini = cgdecay_ini
 		self.cgdecay_fnl = cgdecay_fnl
-
+		self.objfun = objfun
+		self.weight_cost = weight_cost
+		self.damp = damp
+		self.p_i = p_i
+		self_p_f = p_f
 
 	def initialize_params(self, X):
 		'''
@@ -129,9 +138,61 @@ class SHF(object):
 					acts[i+1][:, :-1] = acts[i+1][:, :-1] * self.GV_dropmask
 
 		return acts
-			#print(acts[i+1].shape)
-	def backward(self):
-		pass
+	
+
+	def objective(self, Y, acts):
+		'''
+		Objective function
+		'''
+		(batchsize, n) = np.shape(acts[0])
+		objfunction = self.objfun
+
+		if objfunction == 'MSE':
+			out = 0.5 * np.sum((acts[-1][:,:-1] - Y)**2) / batchsize
+		elif objfunction == 'cross-entropy':
+			out = -np.sum(Y * np.log(acts[-1][:,:-1] + 1e-20) + (1 - Y) * np.log(1 - acts[-1][:,:-1] + 1e-20)) / batchsize
+		elif objfunction == 'softmax-entropy':
+			out = -np.sum(Y * np.log(acts[-1][:,:-1] + 1e-20)) / batchsize
+
+		out += 0.5 * self.weight_cost * ((self.mask * self.theta) ** 2).sum()
+		return out
+
+
+	def backward(self, Y, acts):
+		'''
+		Calculate gradient and precondition of CG 
+		'''
+		(batchsize, n) = np.shape(acts[0])
+		dW =[0] * len(self.layers)
+		db = [0] * len(self.layers)
+		dW2 = [0] * len(self.layers)
+		db2 = [0] * len(self.layers)
+
+		Lx = (acts[-1][:,:-1] - Y) / batchsize
+
+		for i in range(len(self.layers)-1, -1, -1):
+			delta = np.dot(acts[i].T, Lx)
+			dW[i] = delta[:-1, :]
+			db[i] = delta[-1, :]
+
+			delta2 = batchsize * np.dot(acts[i].T**2, Lx**2)
+			dW2[i] = delta2[:-1,:]
+			db2[i] = delta2[-1,:]
+
+			if i > 0:
+				if self.activations[i-1] == 'linear':
+					Lx = np.dot(Lx, np.concatenate((self.W[i], self.b[i])).T)
+				elif self.activations[i-1] == 'logistic':
+					Lx = np.dot(Lx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] * (1 - acts[i]))
+				elif self.activations[i-1] == 'ReLU':
+					Lx = np.dot(Lx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] > 0)
+				Lx = Lx[:,:-1]
+		grad = self.packnet(dW, db)
+		grad = grad + self.weight_cost * (self.mask * self.theta)
+		precon = self.packnet(dW2, db2)
+		precon = (precon + np.ones((len(grad), 1)) * self.damp + self.weight_cost * self.mask)**(3.0/4.0)
+
+		return (grad, precon)	
 
 	def R_forward(self):
 		pass
@@ -200,6 +261,11 @@ class SHF(object):
 					self.GV_dropmask = self.obj_dropmask[np.mod(count, numbatches)::numbatches]
 				# main function
 				acts = self.forward(self.theta, gradbatchX, batchtype='obj')
+				actsbatch = self.forward(self.theta, batchX, batchtype='GV')
+				obj_prev = self.objective(gradbatchY, acts)
+				(grad, precon) = self.backward(gradbatchY, acts)
+				grad = -grad
+				ch = ch * self.p_i
 
 
 

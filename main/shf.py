@@ -107,7 +107,7 @@ class SHF(object):
 		return (W, b)
 
 
-	def forward(self, theta, X, batchtype = 'obj'):
+	def forward(self, theta, X, batchtype='obj', test=False):
 		'''
 		FeedForwaed for the NN.
 		obj: objective (gradient)   GV: Gauss-Newton vector
@@ -131,7 +131,7 @@ class SHF(object):
 				acts[i+1] = np.exp(preacts - preacts.max(1).reshape(batchsize, 1))
 				acts[i+1] = np.concatenate((acts[i+1] / acts[i+1].sum(1).reshape(batchsize, 1), np.ones((batchsize, 1))), 1)
 
-			if i == len(self.layers) - 2:
+			if i == len(self.layers) - 2 and not test:
 				if batchtype == 'obj':
 					acts[i+1][:, :-1] = acts[i+1][:, :-1] * self.obj_dropmask
 				elif batchtype == 'GV':
@@ -140,7 +140,7 @@ class SHF(object):
 		return acts
 	
 
-	def objective(self, Y, acts):
+	def objective(self, theta, Y, acts):
 		'''
 		Objective function
 		'''
@@ -154,7 +154,7 @@ class SHF(object):
 		elif objfunction == 'softmax-entropy':
 			out = -np.sum(Y * np.log(acts[-1][:,:-1] + 1e-20)) / batchsize
 
-		out += 0.5 * self.weight_cost * ((self.mask * self.theta) ** 2).sum()
+		out += 0.5 * self.weight_cost * ((self.mask * theta) ** 2).sum()
 		return out
 
 
@@ -194,11 +194,119 @@ class SHF(object):
 
 		return (grad, precon)	
 
-	def R_forward(self):
-		pass
 
-	def R_backward(self):
-		pass
+	def R_forward(self, acts, v):
+		'''
+		R-operator forward part
+		'''
+		(batchsize, n) = np.shape(acts[0])
+		W = self.W
+		b = self.b
+
+		R = [0] * (len(self.layers) + 1)
+		R[0] = np.zeros((batchsize, self.inputsize + 1))
+		(VW, Vb) = self.unpacknet(v)
+
+		for i in range(len(self.layers)):
+			bz = np.zeros(np.shape(b[i]))
+			R[i+1] = np.concatenate((np.dot(R[i], np.concatenate((W[i], bz))), np.zeros((batchsize, 1))), 1) + np.concatenate((np.dot(acts[i], np.concatenate((VW[i], Vb[i]))), np.ones((batchsize, 1))), 1)
+
+			if self.activations[i] == 'logistic':
+				R[i+1] = R[i+1] * (acts[i+1] * (1 - acts[i+1]))
+			elif self.activations[i] == 'ReLU':
+				R[i+1] = R[i+1] * (acts[i+1] > 0)
+			elif self.activations[i] == 'softmax':
+				R[i+1] = R[i+1] * acts[i+1] - acts[i+1] * (acts[i+1][:,:-1] * R[i+1][:,:-1]).sum(1).reshape(batchsize, 1)
+
+		return R[-1]
+
+	def R_backward(self, acts, R, v):
+		"""
+		Backward for computing Jv 
+		"""
+		(batchsize, n) = np.shape(acts[0])
+		dVW = [0] * len(self.layers)
+		dVb = [0] * len(self.layers)
+
+		RIx = R[:,:-1] / batchsize
+
+		for i in range(len(self.layers) - 1, -1, -1):
+			delta = np.dot(acts[i].T, RIx)
+			dVW[i] = delta[:-1,:]
+			dVb[i] = delta[-1,:]
+
+			if i > 0:
+				if self.activations[i-1] == 'linear':
+					RIx = np.dot(RIx, np.concatenate((self.W[i], self.b[i])).T)
+				elif self.activations[i-1] == 'logistic':
+					RIx = np.dot(RIx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] * (1 - acts[i]))
+				elif self.activations[i-1] == 'ReLU':
+					RIx = np.dot(RIx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] > 0)
+			RIx = RIx[:,:-1]
+
+		gv = self.packnet(dVW, dVb)
+		gv = gv + self.weight_cost * (self.mask * v)
+		gv = gv + self.damp * v
+
+		return gv
+
+	def computeGV(self, X, v, acts=None):
+		'''
+		compute gauss-newton vector: G*V
+		'''
+		gv = self.R_backward(acts, self.R_forward(acts, v), v)
+
+		return gv
+
+	def conjgrad(self, X, b, x0, acts, precon, maxiter):
+		'''
+		CG for solving Gx = -grad.
+		'''
+		IS = [0] * maxiter
+		XS = [0] * maxiter
+		r = self.computeGV(X, x0, acts) - b
+		y = r / precon
+		p = -y
+		x = x0
+		delta_new = (r * y).sum()
+
+		for i in range(maxiter):
+
+			Ap = self.computeGV(X, p, acts)
+			pAp = (p * Ap).sum()
+			alpha = delta_new / pAp
+			x = x + alpha * p
+			r_new = r + alpha * Ap
+			y_new = r_new / precon
+			delta_old = delta_new
+			delta_new = (r_new * y_new).sum()
+			beta = delta_new / delta_old
+			p = -y_new + beta * p
+			r = r_new
+			y = y_new
+
+			IS[i] = i
+			XS[i] = x
+
+		return (XS, IS)
+
+	def results(self, X, Y, testX, testY):
+		'''
+		compute the result and error
+		'''
+		acts = self.forward(self.theta, X, test=True)
+		train_obj = self.objective(self.theta, Y, acts)
+		yhat = np.argmax(acts[-1][:,:-1], 1)
+		train_L = np.argmax(Y, 1)
+		train_err = np.mean(train_L != yhat)
+
+		acts = self.forward(self.theta, testX, test=True)
+		test_obj = self.objective(self.theta, testY, acts)
+		yhat = np.argmax(acts[-1][:,:-1], 1)
+		test_L = np.argmax(testY, 1)
+		test_err = np.mean(test_L != yhat)
+
+		return (train_obj, train_err, test_obj, test_err)
 
 	def train(self, X, Y, testX, testY):
 		'''
@@ -215,7 +323,7 @@ class SHF(object):
 			numbatches = self.gradbatchsize // self.batchsize
 
 			self.theta = self.packnet(self.W, self.b)
-			#print(self.theta.shape)
+			print(self.theta.shape)
 			numparameters = len(self.theta)
 			self.mask = np.ones((numparameters, 1))
 			(maskW, maskB) = self.unpacknet(self.mask)
@@ -226,19 +334,118 @@ class SHF(object):
 			boost = 1 / decrease
 			ch = np.zeros((numparameters, 1))
 			f_decay = 1
-			#print(self.mask.shape)
+			print(self.mask.shape)
 			del maskW
 			del maskB
 
 			return (index_X, numgradbatches, numbatches, decrease, boost, ch, f_decay)
 
+
+		def run_conjgrad(ch, batchX, grad, actsbatch, precon):
+			(chs, iters) = self.conjgrad(batchX, grad, ch, actsbatch, precon, self.maxiter)
+			ch = chs[-1]
+			iters = iters[-1]
+			p = ch
+			return (p, chs, ch)
+
+
+		def conjgrad_backtrack(p, chs, gradbatchX, gradbatchY):
+			'''
+			backtrack the output of CG
+			'''
+			obj = self.objective(self.theta + p, gradbatchY, self.forward(self.theta+p, gradbatchX))
+			for j in range(len(chs)-2, -1, -1):
+				obj_chs = self.objective(self.theta + chs[j], gradbatchY, self.forward(self.theta+chs[j], gradbatchX))
+				if obj < obj_chs:
+					j += 1
+					break
+				obj = obj_chs
+			p = chs[j]
+			return(p, obj)
+
+
+		def reduction_ratio(p, obj, obj_prev, batchX, actsbatch, grad):
+			'''
+			compute the reduction_ratio, with undamped quadratic approximation. 
+			'''
+			current_damp = self.damp
+			self.damp = 0.0
+			denom = self.computeGV(batchX, p, actsbatch)
+			denom = 0.5 * (p * denom).sum(0)
+			denom = denom - (grad * p).sum(0)
+			self.damp = current_damp
+
+			rho = (obj - obj_prev) / denom
+			if obj - obj_prev > 0:
+				rho = -np.inf
+			return rho
+
+
+		def linesearch(obj, obj_prev, grad, gradbatchX, gradbatchY):
+			'''
+			apply a backtracking linesearch for good update
+			'''
+			rate = 1.0
+			c = 1e-2
+			j = 0
+			while j < 60:
+				if obj <= obj_prev + c * rate * (grad * p).sum(0):
+					break
+				else:
+					rate *= 0.8
+					j += 1 
+				obj = self.objective(self.theta, gradbatchY, self.forward(self.theta + rate * p, gradbatchX))
+
+			if j == 60:
+				rate = 0
+				obj = obj_prev
+
+			return rate
+
+
+		def damping_update(rho, boost, decrease):
+			'''
+			using Levenberg-Marquardt to update damping parameter
+			'''
+			if rho < 0.25:
+				self.damp *= boost
+			elif rho > 0.75:
+				self.damp *= decrease
+
+
+		def network_update(f, rate, p):
+			'''
+			update the weight and bias
+			'''
+			self.theta += f * rate * p
+			(self.W, self.b) = self.unpacknet(self.theta)
+
+
+		def results_display(X, Y, testX, testY):
+			print("Epoch %d:" % (self.epoch))
+			(train_obj, train_err, test_obj, test_err) = self.results(X, Y, testX, testY)
+
+			print ("\ttrain error     = %.4f" % (train_err))
+			print ("\ttest error      = %.4f" % (test_err))
+			print ("\tlambda          = %.8f" % (self.damp))
+			print ("\tCG-decay        = %.3f" % (self.p_i))
+
+			self.trainerr_record.append(train_err)
+			self.testerr_record.append(test_err)
+       
+
+
 		# main
 		(index_X, numgradbatches, numbatches, decrease, boost, ch, f_decay) = setup()
 		count = 0
-		self.err_record =[]
+		self.trainerr_record =[]
+		self.testerr_record =[]
+		self.damping_record =[]
+
+        
 
 		for epoch in range(self.maxepoch):
-
+			self.damping_record.append(self.damp)
 			if epoch > 0:
 				f_decay *= 0.998
 				if self.cgdecay_ini < self.cgdecay_fnl:
@@ -262,12 +469,26 @@ class SHF(object):
 				# main function
 				acts = self.forward(self.theta, gradbatchX, batchtype='obj')
 				actsbatch = self.forward(self.theta, batchX, batchtype='GV')
-				obj_prev = self.objective(gradbatchY, acts)
+				obj_prev = self.objective(self.theta, gradbatchY, acts)
 				(grad, precon) = self.backward(gradbatchY, acts)
 				grad = -grad
 				ch = ch * self.p_i
+				(p, chs, ch) = run_conjgrad(ch, batchX, grad, actsbatch, precon)
+				(p, obj) = conjgrad_backtrack(p, chs, gradbatchX, gradbatchY)
+				rho = reduction_ratio(p, obj, obj_prev, batchX, actsbatch, grad)
+				rate = linesearch(obj, obj_prev, grad, gradbatchX, gradbatchY)
+				damping_update(rho, boost, decrease)
+				network_update(f_decay, rate, p)
+				count += 1
+			results_display(X, Y, testX, testY)
+		return (self.trainerr_record, self.testerr_record, self.damping_record)
 
 
+def main():
+	pass
+
+if __name__ == '__main__':
+	main()
 
 
 

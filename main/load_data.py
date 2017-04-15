@@ -1,6 +1,7 @@
 import numpy as np
 
 def load_data():
+
 	# load data
 	data_path = '../data/'
 	data = []
@@ -36,14 +37,16 @@ def load_data():
 	test = test / 255.0
 	return (train, test, train_labels, test_labels)   
 
-def standard(train, test):
-    # normize the data
-    eps = 0.01
-    train_mean = np.mean(train, 0)
-    train_std = np.sqrt(np.var(train, 0) + eps)
-    trainX = (train - train_mean) / train_std
-    testX = (test - train_mean) / train_std
-    return (trainX, testX)
+def normization_data(train, test):
+	'''
+    normize the data
+    '''
+	eps = 0.01 
+	train_mean = np.mean(train, 0)
+	train_std = np.sqrt(np.var(train, 0) + eps)
+	trainX = (train - train_mean) / train_std
+	testX = (test - train_mean) / train_std
+	return (trainX, testX)
 
 
 def main():

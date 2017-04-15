@@ -15,9 +15,7 @@ class SHF(object):
 				 cgdecay_fnl = 0.99,
 				 objfun='softmax-entropy',
 				 weight_cost = 2e-5,
-				 damp = 0.1,
-				 p_i=0.5,
-				 p_f=0.99):
+				 damp = 0.1):
 
 		self.layers = layers
 		self.dropout = dropout
@@ -31,8 +29,6 @@ class SHF(object):
 		self.objfun = objfun
 		self.weight_cost = weight_cost
 		self.damp = damp
-		self.p_i = p_i
-		self_p_f = p_f
 
 	def initialize_params(self, X):
 		'''
@@ -323,7 +319,7 @@ class SHF(object):
 			numbatches = self.gradbatchsize // self.batchsize
 
 			self.theta = self.packnet(self.W, self.b)
-			print(self.theta.shape)
+
 			numparameters = len(self.theta)
 			self.mask = np.ones((numparameters, 1))
 			(maskW, maskB) = self.unpacknet(self.mask)
@@ -332,35 +328,35 @@ class SHF(object):
 			self.mask = self.packnet(maskW, maskB)
 			decrease = 0.99
 			boost = 1 / decrease
-			ch = np.zeros((numparameters, 1))
-			f_decay = 1
-			print(self.mask.shape)
+			cg_ini = np.zeros((numparameters, 1))
+			step_decay = 1
+
 			del maskW
 			del maskB
 
-			return (index_X, numgradbatches, numbatches, decrease, boost, ch, f_decay)
+			return (index_X, numgradbatches, numbatches, decrease, boost, cg_ini, step_decay)
 
 
-		def run_conjgrad(ch, batchX, grad, actsbatch, precon):
-			(chs, iters) = self.conjgrad(batchX, grad, ch, actsbatch, precon, self.maxiter)
-			ch = chs[-1]
+		def run_conjgrad(cg_ini, batchX, grad, actsbatch, precon):
+			(cg_all, iters) = self.conjgrad(batchX, grad, cg_ini, actsbatch, precon, self.maxiter)
+			cg_ini = cg_all[-1]
 			iters = iters[-1]
-			p = ch
-			return (p, chs, ch)
+			p = cg_ini
+			return (p, cg_all, cg_ini)
 
 
-		def conjgrad_backtrack(p, chs, gradbatchX, gradbatchY):
+		def conjgrad_backtrack(p, cg_all, gradbatchX, gradbatchY):
 			'''
 			backtrack the output of CG
 			'''
 			obj = self.objective(self.theta + p, gradbatchY, self.forward(self.theta+p, gradbatchX))
-			for j in range(len(chs)-2, -1, -1):
-				obj_chs = self.objective(self.theta + chs[j], gradbatchY, self.forward(self.theta+chs[j], gradbatchX))
-				if obj < obj_chs:
+			for j in range(len(cg_all)-2, -1, -1):
+				obj_cgall = self.objective(self.theta + cg_all[j], gradbatchY, self.forward(self.theta+cg_all[j], gradbatchX))
+				if obj < obj_cgall:
 					j += 1
 					break
-				obj = obj_chs
-			p = chs[j]
+				obj = obj_cgall
+			p = cg_all[j]
 			return(p, obj)
 
 
@@ -378,6 +374,8 @@ class SHF(object):
 			rho = (obj - obj_prev) / denom
 			if obj - obj_prev > 0:
 				rho = -np.inf
+
+			#print(rho)
 			return rho
 
 
@@ -385,22 +383,22 @@ class SHF(object):
 			'''
 			apply a backtracking linesearch for good update
 			'''
-			rate = 1.0
+			learning_rate = 1.0
 			c = 1e-2
 			j = 0
-			while j < 60:
-				if obj <= obj_prev + c * rate * (grad * p).sum(0):
+			while j < 50:
+				if obj <= obj_prev + c * learning_rate * (grad * p).sum(0):
 					break
 				else:
-					rate *= 0.8
+					learning_rate *= 0.8
 					j += 1 
-				obj = self.objective(self.theta, gradbatchY, self.forward(self.theta + rate * p, gradbatchX))
+				obj = self.objective(self.theta, gradbatchY, self.forward(self.theta + learning_rate * p, gradbatchX))
 
-			if j == 60:
-				rate = 0
+			if j == 50:
+				learning_rate = 0
 				obj = obj_prev
 
-			return rate
+			return learning_rate
 
 
 		def damping_update(rho, boost, decrease):
@@ -411,13 +409,14 @@ class SHF(object):
 				self.damp *= boost
 			elif rho > 0.75:
 				self.damp *= decrease
+			#print(self.damp)
 
 
-		def network_update(f, rate, p):
+		def network_update(f, learning_rate, p):
 			'''
 			update the weight and bias
 			'''
-			self.theta += f * rate * p
+			self.theta += f * learning_rate * p
 			(self.W, self.b) = self.unpacknet(self.theta)
 
 
@@ -425,10 +424,9 @@ class SHF(object):
 			print("Epoch %d:" % (self.epoch))
 			(train_obj, train_err, test_obj, test_err) = self.results(X, Y, testX, testY)
 
-			print ("\ttrain error     = %.4f" % (train_err))
-			print ("\ttest error      = %.4f" % (test_err))
-			print ("\tlambda          = %.8f" % (self.damp))
-			print ("\tCG-decay        = %.3f" % (self.p_i))
+			print ("\ttrain error     = %.6f" % (train_err))
+			print ("\ttest error      = %.6f" % (test_err))
+			print ("\tlambda          = %.6f" % (self.damp))
 
 			self.trainerr_record.append(train_err)
 			self.testerr_record.append(test_err)
@@ -436,7 +434,7 @@ class SHF(object):
 
 
 		# main
-		(index_X, numgradbatches, numbatches, decrease, boost, ch, f_decay) = setup()
+		(index_X, numgradbatches, numbatches, decrease, boost, cg_ini, step_decay) = setup()
 		count = 0
 		self.trainerr_record =[]
 		self.testerr_record =[]
@@ -447,7 +445,7 @@ class SHF(object):
 		for epoch in range(self.maxepoch):
 			self.damping_record.append(self.damp)
 			if epoch > 0:
-				f_decay *= 0.998
+				step_decay *= 0.998
 				if self.cgdecay_ini < self.cgdecay_fnl:
 					self.cgdecay_ini = np.minimum(1.01 * self.cgdecay_ini, self.cgdecay_fnl)
 
@@ -472,13 +470,13 @@ class SHF(object):
 				obj_prev = self.objective(self.theta, gradbatchY, acts)
 				(grad, precon) = self.backward(gradbatchY, acts)
 				grad = -grad
-				ch = ch * self.p_i
-				(p, chs, ch) = run_conjgrad(ch, batchX, grad, actsbatch, precon)
-				(p, obj) = conjgrad_backtrack(p, chs, gradbatchX, gradbatchY)
+				cg_ini = cg_ini * self.cgdecay_ini
+				(p, cg_all, cg_ini) = run_conjgrad(cg_ini, batchX, grad, actsbatch, precon)
+				(p, obj) = conjgrad_backtrack(p, cg_all, gradbatchX, gradbatchY)
 				rho = reduction_ratio(p, obj, obj_prev, batchX, actsbatch, grad)
-				rate = linesearch(obj, obj_prev, grad, gradbatchX, gradbatchY)
+				learning_rate = linesearch(obj, obj_prev, grad, gradbatchX, gradbatchY)
 				damping_update(rho, boost, decrease)
-				network_update(f_decay, rate, p)
+				network_update(step_decay, learning_rate, p)
 				count += 1
 			results_display(X, Y, testX, testY)
 		return (self.trainerr_record, self.testerr_record, self.damping_record)

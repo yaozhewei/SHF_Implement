@@ -434,13 +434,10 @@ class SHF(object):
 
 		# main
 		(index_X, numgradbatches, numbatches, decrease, boost, cg_ini, step_decay) = setup()
-		#print(numgradbatches)
-		count = 0
+
 		self.trainerr_record =[]
 		self.testerr_record =[]
 		self.damping_record =[]
-
-        
 
 		for epoch in range(self.maxepoch):
 			self.damping_record.append(self.damp)
@@ -483,7 +480,6 @@ class SHF(object):
 				learning_rate = linesearch(obj, obj_prev, grad, gradbatchX, gradbatchY)
 				damping_update(rho, boost, decrease)
 				network_update(step_decay, learning_rate, p)
-				count += 1
 			results_display(X, Y, testX, testY)
 		return (self.trainerr_record, self.testerr_record, self.damping_record)
 

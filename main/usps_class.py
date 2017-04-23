@@ -11,7 +11,7 @@ print('Preparing data...')
 # parameter
 _layers = [500, 500, 10]
 _dropout = [0.5, 0.5]
-_maxepoch = 20
+_maxepoch = 500
 _gradbatchsize = 200
 _batchsize = 20
 _maxiter = 5

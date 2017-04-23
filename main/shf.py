@@ -445,7 +445,8 @@ class SHF(object):
 		for epoch in range(self.maxepoch):
 			self.damping_record.append(self.damp)
 			if epoch > 0:
-				step_decay *= 0.998
+				#step_decay *= 0.998
+				step_decay = 1
 				if self.cgdecay_ini < self.cgdecay_fnl:
 					self.cgdecay_ini = np.minimum(1.01 * self.cgdecay_ini, self.cgdecay_fnl)
 
@@ -472,7 +473,9 @@ class SHF(object):
 				grad = -grad
 				cg_ini = cg_ini * self.cgdecay_ini
 				(p, cg_all, cg_ini) = run_conjgrad(cg_ini, batchX, grad, actsbatch, precon)
+				p_med = p
 				(p, obj) = conjgrad_backtrack(p, cg_all, gradbatchX, gradbatchY)
+				p=p_med
 				rho = reduction_ratio(p, obj, obj_prev, batchX, actsbatch, grad)
 				learning_rate = linesearch(obj, obj_prev, grad, gradbatchX, gradbatchY)
 				damping_update(rho, boost, decrease)

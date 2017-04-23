@@ -11,9 +11,9 @@ print('Preparing data...')
 # parameter
 _layers = [500, 500, 10]
 _dropout = [0.5, 0.5]
-_maxepoch = 500
-_gradbatchsize = 200
-_batchsize = 20
+_maxepoch = 50
+_gradbatchsize = 1000
+_batchsize = 100
 _maxiter = 5
 _activations = ['ReLU', 'ReLU', 'softmax']
 _cgdecay_ini = 0.5

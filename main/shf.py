@@ -30,32 +30,32 @@ class SHF(object):
 		self.weight_cost = weight_cost
 		self.damp = damp
 
-	def initialize_params(self, X):
+	def init_parameters(self, X):
 		'''
-		initialize the parameters (weights and bias).
+		initialize the parameters: weights and bias.
 		'''
 		(m,n) = np.shape(X)
 		#print(m,n)
 		(W,b) = ([0] * len(self.layers), [0] * len(self.layers))
 
 		if self.activations[0] == 'ReLU':
-			shift = 0.1
+			b_ReLU_shift = 0.1
 		else:
-			shift = 0
+			b_ReLU_shift = 0
 
 		r = np.sqrt(6) / np.sqrt(n + self.layers[0] + 1)
 		W[0] = 2 * r * np.random.rand(n, self.layers[0]) - r
-		b[0] = np.zeros((1, self.layers[0])) + shift
+		b[0] = np.zeros((1, self.layers[0])) + b_ReLU_shift
 
 		for i in range(1, len(self.layers)):
 			if self.activations[i] == 'ReLU':
-				shift = 0.1
+				b_ReLU_shift = 0.1
 			else:
-				shift = 0
+				b_ReLU_shift = 0
 
 			r = np.sqrt(6) / np.sqrt(n + self.layers[i-1] + self.layers[i] + 1)
 			W[i] = 2 * r * np.random.rand(self.layers[i-1], self.layers[i]) - r
-			b[i] = np.zeros((1, self.layers[i])) + shift
+			b[i] = np.zeros((1, self.layers[i])) + b_ReLU_shift
 		self.numdata = m
 		self.inputsize = n
 		self.W = W
@@ -72,7 +72,7 @@ class SHF(object):
 			theta = np.concatenate((theta, np.concatenate((W[i].flatten(1), b[i].flatten(1)))))
 		theta = theta.reshape(len(theta),1)
 		#print(len(theta))
-		return np.array(theta)
+		return theta
 
 
 	def unpacknet(self, theta):
@@ -86,9 +86,6 @@ class SHF(object):
 		b[0] = np.reshape(theta[index : index + num_b], (1, self.layers[0]), order = 'F')
 		index += num_b
 
-		W[0] = np.array(W[0])
-		b[0] = np.array(b[0])
-
 		for i in range(len(self.layers) - 1):
 			num_w = self.layers[i] * self.layers[i+1]
 			num_b = self.layers[i+1]
@@ -96,10 +93,7 @@ class SHF(object):
 			index += num_w
 			b[i+1] = np.reshape(theta[index : index + num_b], (1, self.layers[i+1]), order = 'F')
 			index += num_b
-
-			W[i+1] = np.array(W[i+1])
-			b[i+1] = np.array(b[i+1])			
-
+		
 		return (W, b)
 
 
@@ -115,7 +109,13 @@ class SHF(object):
 		acts[0] = np.concatenate((X, np.ones((batchsize, 1))), 1) 
 
 		for i in range(len(self.layers)):
-			preacts = np.dot(acts[i], np.concatenate((W[i], b[i])))
+			# forget to multiply (1- drop) 
+			if test and i == 0:
+				preacts = np.dot(acts[i], np.concatenate((W[i] * (1 - self.dropout[0]), b[i])))
+			elif test and i > 0:
+				preacts = np.dot(acts[i], np.concatenate((W[i] * (1 - self.dropout[1]), b[i])))
+			else:
+				preacts = np.dot(acts[i], np.concatenate((W[i], b[i])))
 
 			if self.activations[i] == 'linear':
 				acts[i+1] = np.concatenate((preacts, np.ones((batchsize, 1))), 1)
@@ -143,6 +143,7 @@ class SHF(object):
 		(batchsize, n) = np.shape(acts[0])
 		objfunction = self.objfun
 
+		# change the 1e-16 to 1e-20
 		if objfunction == 'MSE':
 			out = 0.5 * np.sum((acts[-1][:,:-1] - Y)**2) / batchsize
 		elif objfunction == 'cross-entropy':
@@ -150,6 +151,7 @@ class SHF(object):
 		elif objfunction == 'softmax-entropy':
 			out = -np.sum(Y * np.log(acts[-1][:,:-1] + 1e-20)) / batchsize
 
+		# add penalty
 		out += 0.5 * self.weight_cost * ((self.mask * theta) ** 2).sum()
 		return out
 
@@ -184,7 +186,7 @@ class SHF(object):
 					Lx = np.dot(Lx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] > 0)
 				Lx = Lx[:,:-1]
 		grad = self.packnet(dW, db)
-		grad = grad + self.weight_cost * (self.mask * self.theta)
+		grad += self.weight_cost * (self.mask * self.theta)
 		precon = self.packnet(dW2, db2)
 		precon = (precon + np.ones((len(grad), 1)) * self.damp + self.weight_cost * self.mask)**(3.0/4.0)
 
@@ -224,43 +226,42 @@ class SHF(object):
 		dVW = [0] * len(self.layers)
 		dVb = [0] * len(self.layers)
 
-		RIx = R[:,:-1] / batchsize
+		RLx = R[:,:-1] / batchsize
 
 		for i in range(len(self.layers) - 1, -1, -1):
-			delta = np.dot(acts[i].T, RIx)
+			delta = np.dot(acts[i].T, RLx)
 			dVW[i] = delta[:-1,:]
 			dVb[i] = delta[-1,:]
 
 			if i > 0:
 				if self.activations[i-1] == 'linear':
-					RIx = np.dot(RIx, np.concatenate((self.W[i], self.b[i])).T)
+					RLx = np.dot(RLx, np.concatenate((self.W[i], self.b[i])).T)
 				elif self.activations[i-1] == 'logistic':
-					RIx = np.dot(RIx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] * (1 - acts[i]))
+					RLx = np.dot(RLx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] * (1 - acts[i]))
 				elif self.activations[i-1] == 'ReLU':
-					RIx = np.dot(RIx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] > 0)
-			RIx = RIx[:,:-1]
+					RLx = np.dot(RLx, np.concatenate((self.W[i], self.b[i])).T) * (acts[i] > 0)
+			RLx = RLx[:,:-1]
 
-		gv = self.packnet(dVW, dVb)
-		gv = gv + self.weight_cost * (self.mask * v)
-		gv = gv + self.damp * v
+		Jv = self.packnet(dVW, dVb)
+		Jv += self.weight_cost * (self.mask * v)
+		Jv += self.damp * v
 
-		return gv
+		return Jv
 
-	def computeGV(self, X, v, acts=None):
+	def computeJv(self, X, v, acts=None):
 		'''
-		compute gauss-newton vector: G*V
+		compute gauss-newton vector: JV
 		'''
-		gv = self.R_backward(acts, self.R_forward(acts, v), v)
+		Jv = self.R_backward(acts, self.R_forward(acts, v), v)
 
-		return gv
+		return Jv
 
 	def conjgrad(self, X, b, x0, acts, precon, maxiter):
 		'''
 		CG for solving Gx = -grad.
 		'''
-		IS = [0] * maxiter
 		XS = [0] * maxiter
-		r = self.computeGV(X, x0, acts) - b
+		r = self.computeJv(X, x0, acts) - b
 		y = r / precon
 		p = -y
 		x = x0
@@ -268,7 +269,7 @@ class SHF(object):
 
 		for i in range(maxiter):
 
-			Ap = self.computeGV(X, p, acts)
+			Ap = self.computeJv(X, p, acts)
 			pAp = (p * Ap).sum()
 			alpha = delta_new / pAp
 			x = x + alpha * p
@@ -281,10 +282,9 @@ class SHF(object):
 			r = r_new
 			y = y_new
 
-			IS[i] = i
 			XS[i] = x
 
-		return (XS, IS)
+		return XS
 
 	def results(self, X, Y, testX, testY):
 		'''
@@ -312,10 +312,12 @@ class SHF(object):
 			'''
 			set up the NN. We shuffle the order of X in order to get minibatch for computing gradient and Gauss-Newton matrix. 
 			'''
-			self.initialize_params(X)
+			self.init_parameters(X)
 			index_X = list(range(self.numdata))
 			np.random.shuffle(index_X)
+			print(len(index_X))
 			numgradbatches = len(index_X) // self.gradbatchsize
+			print(numgradbatches)
 			numbatches = self.gradbatchsize // self.batchsize
 
 			self.theta = self.packnet(self.W, self.b)
@@ -338,9 +340,8 @@ class SHF(object):
 
 
 		def run_conjgrad(cg_ini, batchX, grad, actsbatch, precon):
-			(cg_all, iters) = self.conjgrad(batchX, grad, cg_ini, actsbatch, precon, self.maxiter)
+			cg_all = self.conjgrad(batchX, grad, cg_ini, actsbatch, precon, self.maxiter)
 			cg_ini = cg_all[-1]
-			iters = iters[-1]
 			p = cg_ini
 			return (p, cg_all, cg_ini)
 
@@ -366,7 +367,7 @@ class SHF(object):
 			'''
 			current_damp = self.damp
 			self.damp = 0.0
-			denom = self.computeGV(batchX, p, actsbatch)
+			denom = self.computeJv(batchX, p, actsbatch)
 			denom = 0.5 * (p * denom).sum(0)
 			denom = denom - (grad * p).sum(0)
 			self.damp = current_damp
@@ -386,7 +387,7 @@ class SHF(object):
 			learning_rate = 1.0
 			c = 1e-2
 			j = 0
-			while j < 50:
+			while j < 60:
 				if obj <= obj_prev + c * learning_rate * (grad * p).sum(0):
 					break
 				else:
@@ -394,7 +395,7 @@ class SHF(object):
 					j += 1 
 				obj = self.objective(self.theta, gradbatchY, self.forward(self.theta + learning_rate * p, gradbatchX))
 
-			if j == 50:
+			if j == 60:
 				learning_rate = 0
 				obj = obj_prev
 
@@ -405,7 +406,7 @@ class SHF(object):
 			'''
 			using Levenberg-Marquardt to update damping parameter
 			'''
-			if rho < 0.25:
+			if rho < 0.25 or np.isnan(rho):
 				self.damp *= boost
 			elif rho > 0.75:
 				self.damp *= decrease
@@ -435,6 +436,7 @@ class SHF(object):
 
 		# main
 		(index_X, numgradbatches, numbatches, decrease, boost, cg_ini, step_decay) = setup()
+		#print(numgradbatches)
 		count = 0
 		self.trainerr_record =[]
 		self.testerr_record =[]
@@ -445,10 +447,12 @@ class SHF(object):
 		for epoch in range(self.maxepoch):
 			self.damping_record.append(self.damp)
 			if epoch > 0:
-				#step_decay *= 0.998
-				step_decay = 1
+				step_decay *= 0.998
+				#step_decay = 1
 				if self.cgdecay_ini < self.cgdecay_fnl:
 					self.cgdecay_ini = np.minimum(1.01 * self.cgdecay_ini, self.cgdecay_fnl)
+					if self.cgdecay_ini > self.cgdecay_fnl:
+						self.cgdecay_ini = self.cgdecay_fnl
 
 			self.epoch = epoch
 
@@ -473,10 +477,11 @@ class SHF(object):
 				grad = -grad
 				cg_ini = cg_ini * self.cgdecay_ini
 				(p, cg_all, cg_ini) = run_conjgrad(cg_ini, batchX, grad, actsbatch, precon)
-				p_med = p
+				#p_med = p
 				(p, obj) = conjgrad_backtrack(p, cg_all, gradbatchX, gradbatchY)
-				p=p_med
+				#p=p_med
 				rho = reduction_ratio(p, obj, obj_prev, batchX, actsbatch, grad)
+				print(rho)
 				learning_rate = linesearch(obj, obj_prev, grad, gradbatchX, gradbatchY)
 				damping_update(rho, boost, decrease)
 				network_update(step_decay, learning_rate, p)

@@ -315,9 +315,7 @@ class SHF(object):
 			self.init_parameters(X)
 			index_X = list(range(self.numdata))
 			np.random.shuffle(index_X)
-			print(len(index_X))
 			numgradbatches = len(index_X) // self.gradbatchsize
-			print(numgradbatches)
 			numbatches = self.gradbatchsize // self.batchsize
 
 			self.theta = self.packnet(self.W, self.b)
@@ -481,7 +479,7 @@ class SHF(object):
 				(p, obj) = conjgrad_backtrack(p, cg_all, gradbatchX, gradbatchY)
 				#p=p_med
 				rho = reduction_ratio(p, obj, obj_prev, batchX, actsbatch, grad)
-				print(rho)
+				#print(rho)
 				learning_rate = linesearch(obj, obj_prev, grad, gradbatchX, gradbatchY)
 				damping_update(rho, boost, decrease)
 				network_update(step_decay, learning_rate, p)
